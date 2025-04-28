@@ -31,7 +31,9 @@ public class ReviveListener implements Listener {
     public void onPlayerInteract(PlayerInteractEvent event) {
         Player player = event.getPlayer();
         ItemStack item = event.getItem();
-
+        if (!plugin.isRevivalSystemEnabled()) {
+            return;  // 如果復活系統被禁用，直接返回，不處理任何復活相關事件
+        }
         // 檢查是否是右鍵點擊
         if (event.getAction() != Action.RIGHT_CLICK_AIR && event.getAction() != Action.RIGHT_CLICK_BLOCK) {
             return;
@@ -74,6 +76,10 @@ public class ReviveListener implements Listener {
 
     @EventHandler
     public void onInventoryClick(InventoryClickEvent event) {
+
+        if (!plugin.isRevivalSystemEnabled()) {
+            return;  // 如果復活系統被禁用，直接返回，不處理任何復活相關事件
+        }
         // 檢查是否是我們的GUI
         if (!event.getView().getTitle().equals("§6選擇要復活的玩家")) {
             return;

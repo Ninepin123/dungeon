@@ -2,7 +2,9 @@
 
 settings:
   exit-point: "world,0,64,0,0,0"
+  revival-system-enabled: true
 
+  
 dungeons:
   # 普通副本示例
   dungeon_normal_1:

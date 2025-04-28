@@ -24,7 +24,10 @@ public class ReviveManager {
      * 開始復活流程
      */
     public boolean startRevive(Player reviver, Player target, String reviveType, ItemStack reviveItem) {
-        // 檢查雙方是否在同一副本中
+        if (!plugin.isRevivalSystemEnabled()) {
+            reviver.sendMessage("§c復活系統目前已被禁用");
+            return false;
+        }
         String reviverDungeonId = plugin.getDungeonManager().getPlayerDungeon(reviver.getUniqueId());
         String targetDungeonId = plugin.getDungeonManager().getPlayerDungeon(target.getUniqueId());
 

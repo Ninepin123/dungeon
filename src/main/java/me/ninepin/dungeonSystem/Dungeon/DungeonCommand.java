@@ -232,6 +232,12 @@ public class DungeonCommand implements CommandExecutor, TabCompleter {
      * 處理獲取復活裝置指令
      */
     private void handleReviveCommand(Player player, String[] args) {
+        // 檢查復活系統是否啟用
+        if (!plugin.isRevivalSystemEnabled()) {
+            player.sendMessage("§c復活系統目前已被禁用，無法使用此命令");
+            return;
+        }
+
         if (!player.hasPermission("dungeonsystem.admin")) {
             player.sendMessage("§c你沒有權限執行此指令");
             return;
@@ -273,7 +279,11 @@ public class DungeonCommand implements CommandExecutor, TabCompleter {
         if (player.hasPermission("dungeonsystem.admin")) {
             player.sendMessage("§e/dungeon reload §7- 重新加載副本配置");
             player.sendMessage("§e/dungeon key <副本ID> [數量] §7- 獲取副本入場卷");
-            player.sendMessage("§e/dungeon revive <normal|advanced> [數量] §7- 獲取復活裝置");
+
+            // 只有在復活系統啟用時才顯示復活裝置相關命令
+            if (plugin.isRevivalSystemEnabled()) {
+                player.sendMessage("§e/dungeon revive <normal|advanced> [數量] §7- 獲取復活裝置");
+            }
         }
     }
 
@@ -289,7 +299,11 @@ public class DungeonCommand implements CommandExecutor, TabCompleter {
             if (sender.hasPermission("dungeonsystem.admin")) {
                 completions.add("reload");
                 completions.add("key");
-                completions.add("revive"); // 添加新的子指令
+
+                // 只有在復活系統啟用時才顯示 revive 選項
+                if (plugin.isRevivalSystemEnabled()) {
+                    completions.add("revive");
+                }
             }
 
             return completions.stream()
@@ -304,7 +318,8 @@ public class DungeonCommand implements CommandExecutor, TabCompleter {
                 return plugin.getDungeonManager().getAvailableDungeonIds().stream()
                         .filter(name -> name.toLowerCase().startsWith(args[1].toLowerCase()))
                         .collect(Collectors.toList());
-            } else if (args[0].equalsIgnoreCase("revive") && sender.hasPermission("dungeonsystem.admin")) {
+            } else if (args[0].equalsIgnoreCase("revive") && sender.hasPermission("dungeonsystem.admin")
+                    && plugin.isRevivalSystemEnabled()) {  // 添加復活系統狀態檢查
                 // 為復活裝置提供選項
                 List<String> options = Arrays.asList("normal", "advanced");
                 return options.stream()

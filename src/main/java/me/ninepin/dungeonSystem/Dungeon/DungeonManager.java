@@ -228,16 +228,60 @@ public class DungeonManager {
 
         if (dungeon == null) return;
 
-        // 傳送玩家到死亡等待區
-        player.teleport(dungeon.getDeathWaitingArea());
-        player.sendMessage("§c你在副本中死亡，已被傳送到等待區");
+        if (plugin.isRevivalSystemEnabled()) {
+            // 復活系統啟用，原有邏輯
+            player.teleport(dungeon.getDeathWaitingArea());
+            player.sendMessage("§c你在副本中死亡，已被傳送到等待區");
 
-        // 記錄玩家死亡
-        Set<UUID> dungeonDeadPlayers = deadPlayers.computeIfAbsent(dungeonId, k -> new HashSet<>());
-        dungeonDeadPlayers.add(playerId);
+            // 記錄玩家死亡
+            Set<UUID> dungeonDeadPlayers = deadPlayers.computeIfAbsent(dungeonId, k -> new HashSet<>());
+            dungeonDeadPlayers.add(playerId);
 
-        // 檢查隊伍狀態
-        checkTeamStatus(dungeonId);
+            // 檢查隊伍狀態
+            checkTeamStatus(dungeonId);
+        } else {
+            // 復活系統禁用，直接踢出副本
+            // 從配置文件獲取退出點坐標
+            String exitPointStr = plugin.getConfig().getString("settings.exit-point");
+            Location exitPoint = parseLocation(exitPointStr);
+
+            // 如果配置中沒有退出點或格式不正確，使用世界出生點作為備用
+            if (exitPoint == null) {
+                exitPoint = Bukkit.getWorlds().get(0).getSpawnLocation();
+            }
+
+            player.teleport(exitPoint);
+            player.sendMessage("§c你在副本中死亡，已被傳送出副本");
+
+            // 從記錄中移除此玩家
+            playerDungeons.remove(playerId);
+
+            // 檢查副本是否空了
+            checkIfDungeonEmpty(dungeonId);
+        }
+    }
+
+    // 新增方法：檢查副本是否空了
+    private void checkIfDungeonEmpty(String dungeonId) {
+        boolean dungeonEmpty = true;
+        for (UUID id : playerDungeons.keySet()) {
+            if (dungeonId.equals(playerDungeons.get(id))) {
+                dungeonEmpty = false;
+                break;
+            }
+        }
+
+        // 如果副本空了，清理怪物並釋放副本
+        if (dungeonEmpty) {
+            Dungeon dungeon = dungeons.get(dungeonId);
+            if (dungeon instanceof WaveDungeon) {
+                waveDungeonManager.cancelWaveTimer(dungeonId);
+            }
+
+            cleanupDungeon(dungeonId);
+            deadPlayers.remove(dungeonId);
+            activeDungeons.remove(dungeonId);
+        }
     }
 
     /**
@@ -319,6 +363,11 @@ public class DungeonManager {
      * 檢查隊伍狀態
      */
     private void checkTeamStatus(String dungeonId) {
+        // 如果復活系統被禁用，則不需要檢查團滅
+        if (!plugin.isRevivalSystemEnabled()) {
+            return;
+        }
+
         Set<UUID> dungeonDeadPlayers = deadPlayers.getOrDefault(dungeonId, new HashSet<>());
         Set<UUID> dungeonPlayers = new HashSet<>();
 

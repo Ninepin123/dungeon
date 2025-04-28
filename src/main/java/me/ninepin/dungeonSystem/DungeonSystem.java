@@ -25,7 +25,17 @@ public class DungeonSystem extends JavaPlugin {
         partyManager = new PartyManager(this);
         dungeonManager = new DungeonManager(this);
         keyManager = new KeyManager(this);
-        reviveItemManager = new ReviveItemManager(this);
+
+        // 檢查復活系統是否啟用
+        if (isRevivalSystemEnabled()) {
+            reviveItemManager = new ReviveItemManager(this);
+            // 注册復活系統相關事件监听器
+            getServer().getPluginManager().registerEvents(new ReviveListener(this), this);
+            getLogger().info("Revival system is enabled.");
+        } else {
+            reviveItemManager = null;
+            getLogger().info("Revival system is disabled.");
+        }
 
         // 获取WaveDungeonManager实例
         waveDungeonManager = dungeonManager.getWaveDungeonManager();
@@ -33,11 +43,11 @@ public class DungeonSystem extends JavaPlugin {
         // 注册命令
         getCommand("dungeon").setExecutor(new DungeonCommand(this));
         getCommand("party").setExecutor(new PartyCommand(this));
+
         // 注册事件监听器
         getServer().getPluginManager().registerEvents(new DungeonListener(this), this);
         getServer().getPluginManager().registerEvents(new DungeonMobListener(this), this);
         getServer().getPluginManager().registerEvents(new DungeonInteractListener(this), this);
-        getServer().getPluginManager().registerEvents(new ReviveListener(this), this);
 
         // 注册波次副本事件监听器
         getServer().getPluginManager().registerEvents(new WaveDungeonListener(this, waveDungeonManager), this);
@@ -69,14 +79,31 @@ public class DungeonSystem extends JavaPlugin {
         if (keyManager != null) {
             keyManager.reload();
         }
-        if (reviveItemManager != null) {
-            reviveItemManager.reload();
+
+        // 檢查復活系統狀態
+        boolean revivalEnabled = isRevivalSystemEnabled();
+
+        // 重新加載或初始化復活系統
+        if (revivalEnabled) {
+            if (reviveItemManager == null) {
+                reviveItemManager = new ReviveItemManager(this);
+                getServer().getPluginManager().registerEvents(new ReviveListener(this), this);
+                getLogger().info("Revival system has been enabled.");
+            } else {
+                reviveItemManager.reload();
+            }
+        } else if (reviveItemManager != null) {
+            reviveItemManager = null;
+            getLogger().info("Revival system has been disabled.");
         }
+
         if (dungeonManager != null) {
             dungeonManager.reloadDungeons();
         }
     }
-
+    public boolean isRevivalSystemEnabled() {
+        return getConfig().getBoolean("settings.revival-system-enabled", true);
+    }
     // 添加 PartyManager 的 getter 方法
     public PartyManager getPartyManager() {
         return partyManager;
@@ -104,6 +131,10 @@ public class DungeonSystem extends JavaPlugin {
      * 獲取復活物品管理器
      */
     public ReviveItemManager getReviveItemManager() {
+        if (!isRevivalSystemEnabled()) {
+            getLogger().warning("Attempted to access revival system when it is disabled!");
+            return null;
+        }
         return reviveItemManager;
     }
     public WaveDungeonManager getWaveDungeonManager() {
