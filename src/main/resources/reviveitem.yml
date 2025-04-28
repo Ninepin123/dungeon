@@ -1,0 +1,17 @@
+items:
+  normal:
+    name: "§e復活裝置"
+    lore:
+      - "§7使用此裝置可以復活已死亡的隊友"
+      - "§c需要等待10秒才能完成復活"
+      - "§7右鍵點擊使用"
+    material: "TOTEM_OF_UNDYING"
+    custom_model_data: 1
+  advanced:
+    name: "§6高級復活裝置"
+    lore:
+      - "§7使用此裝置可以立即復活已死亡的隊友"
+      - "§a無需等待時間"
+      - "§7右鍵點擊使用"
+    material: "TOTEM_OF_UNDYING"
+    custom_model_data: 2

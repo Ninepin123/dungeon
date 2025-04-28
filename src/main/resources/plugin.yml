@@ -1,0 +1,20 @@
+name: DungeonSystem
+version: 1.0
+main: me.ninepin.dungeonSystem.DungeonSystem
+api-version: 1.16
+depend: [ MythicMobs ]
+commands:
+  dungeon:
+    description: 副本系統主指令
+    usage: /dungeon <子指令>
+    aliases: [ dg ]
+  party:
+    description: 隊伍系統指令
+    usage: /party <子指令>
+permissions:
+  dungeonsystem.admin:
+    description: 允許使用管理員指令
+    default: op
+  dungeon.join:
+    description: 允許加入副本
+    default: false

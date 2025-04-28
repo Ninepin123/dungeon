@@ -1,0 +1,32 @@
+# keys.yml - 副本入场券配置文件
+# 此文件管理所有副本的入场券配置
+
+keys:
+  # 普通副本入场券示例
+  dungeon_normal:
+    name: "§e普通副本入場卷"
+    lore:
+      - "§7使用此卷進入普通副本"
+      - "§7右鍵點擊使用"
+    material: "PAPER"
+    custom_model_data: 1
+    is_wave: false
+
+  # 波次副本入场券示例
+  dungeon_wave:
+    name: "§b波次副本入場卷"
+    lore:
+      - "§7使用此卷進入波次副本"
+      - "§b總波數: §f3"
+      - "§7需要清理所有波次的怪物"
+      - "§7右鍵點擊使用"
+    material: "BOOK"
+    custom_model_data: 2
+    is_wave: true
+
+# 全局设置
+settings:
+  # 默认材质 (当未指定时)
+  default_material: "PAPER"
+  # 默认模型数据 (当未指定时)
+  default_model_data: 0
