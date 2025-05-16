@@ -79,7 +79,7 @@ public class WaveDungeonManager {
      * 开始下一波的倒计时
      *
      * @param dungeonId 副本ID
-     * @param seconds 倒计时秒数
+     * @param seconds   倒计时秒数
      */
     private void startNextWaveCountdown(String dungeonId, int seconds) {
         // 记录日志
@@ -142,6 +142,7 @@ public class WaveDungeonManager {
         // 储存任务
         countdownTasks.put(dungeonId, task);
     }
+
     /**
      * 清理副本的倒计时资源
      *
@@ -263,6 +264,12 @@ public class WaveDungeonManager {
         entities.clear(); // 清空上一波的实体记录
 
         int successfulSpawns = 0;
+        int totalMobsToSpawn = 0;
+
+        // 先計算總共要生成多少隻怪物
+        for (DungeonMob mob : mobs) {
+            totalMobsToSpawn += mob.getAmount();
+        }
 
         // 生成怪物
         for (DungeonMob mob : mobs) {
@@ -272,16 +279,35 @@ public class WaveDungeonManager {
                     continue;
                 }
 
-                ActiveMob entity = MythicBukkit.inst().getMobManager().spawnMob(mob.getId(), mob.getLocation());
-                if (entity != null) {
-                    entities.add(entity.getUniqueId());
-                    successfulSpawns++;
+                // 根據 amount 生成多隻怪物
+                int amount = mob.getAmount();
+                double radius = mob.getRadius();
+                Location baseLocation = mob.getLocation();
 
-                    // 更详细的日志信息
-                    plugin.getLogger().info("在副本 " + dungeonId + " 的波次 " + currentWave + " 中生成怪物 " +
-                            mob.getId() + " 在 " + locationToString(mob.getLocation()));
-                } else {
-                    plugin.getLogger().warning("无法生成怪物: " + mob.getId() + "，MythicMobs返回空实体");
+                plugin.getLogger().info("在副本 " + dungeonId + " 的波次 " + currentWave + " 中準備生成 " + amount + " 隻 " + mob.getId());
+
+                for (int i = 0; i < amount; i++) {
+                    Location spawnLocation;
+
+                    if (radius > 0) {
+                        // 在指定半徑內隨機生成位置
+                        spawnLocation = getRandomLocationInRadius(baseLocation, radius);
+                    } else {
+                        // 使用原始位置
+                        spawnLocation = baseLocation.clone();
+                    }
+
+                    ActiveMob entity = MythicBukkit.inst().getMobManager().spawnMob(mob.getId(), spawnLocation);
+                    if (entity != null) {
+                        entities.add(entity.getUniqueId());
+                        successfulSpawns++;
+
+                        // 更详细的日志信息
+                        plugin.getLogger().info("在副本 " + dungeonId + " 的波次 " + currentWave + " 中生成怪物 " +
+                                mob.getId() + " 在 " + locationToString(spawnLocation));
+                    } else {
+                        plugin.getLogger().warning("无法生成怪物: " + mob.getId() + "，MythicMobs返回空实体");
+                    }
                 }
             } catch (Exception e) {
                 plugin.getLogger().severe("生成怪物 " + mob.getId() + " 时发生错误: " + e.getMessage());
@@ -299,10 +325,40 @@ public class WaveDungeonManager {
 
         // 通知玩家
         broadcastToDungeon(dungeonId, "§c第 " + currentWave + " 波怪物已生成，共 " + successfulSpawns + " 隻！");
+        if (totalMobsToSpawn != successfulSpawns) {
+            plugin.getLogger().warning("波次 " + currentWave + " 預計生成 " + totalMobsToSpawn + " 隻怪物，實際成功生成 " + successfulSpawns + " 隻");
+        }
 
         if (currentWave == waveDungeon.getTotalWaves()) {
             broadcastToDungeon(dungeonId, "§6这是最后一波怪物了，加油！");
         }
+    }
+
+    /**
+     * 在指定半徑內生成隨機位置（平面上）
+     *
+     * @param center 中心位置
+     * @param radius 半徑
+     * @return 隨機位置
+     */
+    private Location getRandomLocationInRadius(Location center, double radius) {
+        Random random = new Random();
+
+        // 生成隨機角度（0 到 2π）
+        double angle = random.nextDouble() * 2 * Math.PI;
+
+        // 生成隨機距離（0 到 radius）
+        double distance = random.nextDouble() * radius;
+
+        // 計算隨機位置
+        double x = center.getX() + distance * Math.cos(angle);
+        double z = center.getZ() + distance * Math.sin(angle);
+
+        // 保持原始的 Y 坐標（平面上）
+        Location randomLocation = new Location(center.getWorld(), x, center.getY(), z,
+                center.getYaw(), center.getPitch());
+
+        return randomLocation;
     }
 
     /**
@@ -368,6 +424,7 @@ public class WaveDungeonManager {
 
     /**
      * 完成副本
+     *
      * @param dungeonId 副本ID
      */
     private void completeDungeon(String dungeonId) {
@@ -472,18 +529,6 @@ public class WaveDungeonManager {
         plugin.getLogger().info("已清理副本 " + dungeonId + " 的波次数据");
     }
 
-    /**
-     * 判断副本是否有波次数据
-     *
-     * @param dungeonId 副本ID
-     * @return 是否有波次数据
-     */
-    public boolean hasWaveData(String dungeonId) {
-        return waveEntities.containsKey(dungeonId) ||
-                waveCleared.containsKey(dungeonId) ||
-                waveTimers.containsKey(dungeonId) ||
-                countdownTasks.containsKey(dungeonId);
-    }
 
     /**
      * 向副本中的所有玩家广播消息
@@ -518,30 +563,5 @@ public class WaveDungeonManager {
             }
             waveTimers.remove(dungeonId);
         }
-    }
-
-    /**
-     * 清理所有波次资源
-     */
-    public void cleanupAll() {
-        // 取消所有计时器
-        for (BukkitTask task : waveTimers.values()) {
-            if (task != null) {
-                task.cancel();
-            }
-        }
-
-        // 取消所有倒计时任务
-        for (BukkitTask task : countdownTasks.values()) {
-            if (task != null) {
-                task.cancel();
-            }
-        }
-
-        waveTimers.clear();
-        waveEntities.clear();
-        waveCleared.clear();
-        nextWaveCountdowns.clear();
-        countdownTasks.clear();
     }
 }

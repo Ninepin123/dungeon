@@ -104,8 +104,11 @@ public class DungeonInteractListener implements Listener {
         // 尝试进入副本
         boolean success = dungeonManager.joinDungeon(player, instanceId);
 
-        // 如果成功进入，消耗一个入场券
+// 如果成功进入，消耗一个入场券
         if (success) {
+            // 播放鑰匙使用音效
+            keyManager.playKeyUseSound(player, baseId);
+
             if (item.getAmount() > 1) {
                 item.setAmount(item.getAmount() - 1);
             } else {
@@ -113,16 +116,16 @@ public class DungeonInteractListener implements Listener {
             }
             player.updateInventory();
 
-            // 记录日志
+            // 記錄日誌
             plugin.getLogger().info("玩家 " + player.getName() + " 使用 " + baseId +
-                    (isWaveKey ? " 波次" : "") + " 副本入场券进入了实例 " + instanceId);
+                    (isWaveKey ? " 波次" : "") + " 副本入場券進入了實例 " + instanceId);
 
-            // 根据副本类型显示不同的消息
+            // 根據副本類型顯示不同的訊息
             if (dungeon instanceof WaveDungeon) {
                 WaveDungeon waveDungeon = (WaveDungeon) dungeon;
-                player.sendMessage("§b你已使用波次副本入场券进入 §e" + baseId + " §b(共 " + waveDungeon.getTotalWaves() + " 波)");
+                player.sendMessage("§b你已使用波次副本入場券進入 §e" + baseId + " §b(共 " + waveDungeon.getTotalWaves() + " 波)");
             } else {
-                player.sendMessage("§b你已使用副本入场券进入 §e" + baseId);
+                player.sendMessage("§b你已使用副本入場券進入 §e" + baseId);
             }
         }
     }

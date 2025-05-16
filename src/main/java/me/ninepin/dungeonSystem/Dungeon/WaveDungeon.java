@@ -2,6 +2,7 @@ package me.ninepin.dungeonSystem.Dungeon;
 
 import org.bukkit.Location;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -72,6 +73,20 @@ public class WaveDungeon extends Dungeon {
         }
         return -1; // 表示已经是最后一波
     }
+    /**
+     * 添加怪物到指定波次
+     *
+     * @param wave 波次
+     * @param mob 怪物對象
+     */
+    public void addMobToWave(int wave, DungeonMob mob) {
+        List<DungeonMob> waveList = waveMobs.get(wave);
+        if (waveList == null) {
+            waveList = new ArrayList<>();
+            waveMobs.put(wave, waveList);
+        }
+        waveList.add(mob);
+    }
 
     /**
      * 获取指定波数的怪物列表
@@ -81,15 +96,6 @@ public class WaveDungeon extends Dungeon {
      */
     public List<DungeonMob> getWaveMobs(int wave) {
         return waveMobs.get(wave);
-    }
-
-    /**
-     * 获取当前波数的怪物列表
-     *
-     * @return 当前波的怪物列表
-     */
-    public List<DungeonMob> getCurrentWaveMobs() {
-        return waveMobs.get(currentWave);
     }
 
     /**

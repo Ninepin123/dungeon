@@ -62,27 +62,5 @@ public class WaveDungeonListener implements Listener {
         }
     }
 
-    /**
-     * 检查副本中所有玩家是否都已死亡
-     * @param dungeonId 副本ID
-     * @return 是否全部死亡
-     */
-    private boolean areAllPlayersDead(String dungeonId) {
-        int playersInDungeon = 0;
-        int deadPlayers = 0;
 
-        for (Map.Entry<UUID, String> entry : dungeonManager.getPlayerDungeons().entrySet()) {
-            if (dungeonId.equals(entry.getValue())) {
-                playersInDungeon++;
-
-                // 检查玩家是否在死亡列表中
-                if (dungeonManager.getDeadPlayers(dungeonId) != null &&
-                        dungeonManager.getDeadPlayers(dungeonId).contains(entry.getKey())) {
-                    deadPlayers++;
-                }
-            }
-        }
-
-        return playersInDungeon > 0 && playersInDungeon == deadPlayers;
-    }
 }

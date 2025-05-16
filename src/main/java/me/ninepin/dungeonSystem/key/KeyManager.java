@@ -5,6 +5,7 @@ import me.ninepin.dungeonSystem.Dungeon.WaveDungeon;
 import me.ninepin.dungeonSystem.DungeonSystem;
 import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
+import org.bukkit.Sound;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.Player;
@@ -122,12 +123,28 @@ public class KeyManager {
                 keyConfig.set("keys." + baseId + ".material", material);
                 keyConfig.set("keys." + baseId + ".custom_model_data", customModelData);
                 keyConfig.set("keys." + baseId + ".is_wave", isWaveDungeon);
+
+                // 添加預設音效配置
+                String defaultSound = isWaveDungeon ? "BLOCK_LEVER_CLICK" : "ENTITY_EXPERIENCE_ORB_PICKUP";
+                keyConfig.set("keys." + baseId + ".use_sound.sound", defaultSound);
+                keyConfig.set("keys." + baseId + ".use_sound.volume", 1.0);
+                keyConfig.set("keys." + baseId + ".use_sound.pitch", 1.0);
+
                 saveConfig();
 
                 plugin.getLogger().info("為副本 " + baseId + " 創建了鑰匙配置（類型：" + (isWaveDungeon ? "波次" : "普通") + "）");
             } else {
                 // 检查现有条目是否需要更新波次状态
                 keyConfig.set("keys." + baseId + ".is_wave", isWaveDungeon);
+
+                // 確保現有配置有音效設定，如果沒有就添加預設值
+                if (!keyConfig.contains("keys." + baseId + ".use_sound")) {
+                    String defaultSound = isWaveDungeon ? "BLOCK_LEVER_CLICK" : "ENTITY_EXPERIENCE_ORB_PICKUP";
+                    keyConfig.set("keys." + baseId + ".use_sound.sound", defaultSound);
+                    keyConfig.set("keys." + baseId + ".use_sound.volume", 1.0);
+                    keyConfig.set("keys." + baseId + ".use_sound.pitch", 1.0);
+                    plugin.getLogger().info("為副本 " + baseId + " 添加了預設音效配置");
+                }
 
                 // 如果副本类型发生变化(普通→波次或波次→普通)，可能需要更新配置
                 boolean configIsWave = keyConfig.getBoolean("keys." + baseId + ".is_wave");
@@ -140,7 +157,48 @@ public class KeyManager {
         }
         saveConfig();
     }
+    /**
+     * 獲取鑰匙的音效配置
+     * @param baseId 副本基礎ID
+     * @return 包含音效信息的 Map，如果沒有配置則返回預設值
+     */
+    public Map<String, Object> getKeySoundConfig(String baseId) {
+        Map<String, Object> soundConfig = new HashMap<>();
 
+        if (keyConfig.contains("keys." + baseId + ".use_sound")) {
+            soundConfig.put("sound", keyConfig.getString("keys." + baseId + ".use_sound.sound", "ENTITY_EXPERIENCE_ORB_PICKUP"));
+            soundConfig.put("volume", keyConfig.getDouble("keys." + baseId + ".use_sound.volume", 1.0));
+            soundConfig.put("pitch", keyConfig.getDouble("keys." + baseId + ".use_sound.pitch", 1.0));
+        } else {
+            // 預設音效
+            soundConfig.put("sound", "ENTITY_EXPERIENCE_ORB_PICKUP");
+            soundConfig.put("volume", 1.0);
+            soundConfig.put("pitch", 1.0);
+        }
+
+        return soundConfig;
+    }
+
+    /**
+     * 播放鑰匙使用音效
+     * @param player 玩家
+     * @param baseId 副本基礎ID
+     */
+    public void playKeyUseSound(Player player, String baseId) {
+        Map<String, Object> soundConfig = getKeySoundConfig(baseId);
+
+        try {
+            String soundName = (String) soundConfig.get("sound");
+            double volume = (Double) soundConfig.get("volume");
+            double pitch = (Double) soundConfig.get("pitch");
+
+            Sound sound = Sound.valueOf(soundName);
+            player.playSound(player.getLocation(), sound, (float) volume, (float) pitch);
+        } catch (IllegalArgumentException e) {
+            plugin.getLogger().warning("無效的音效名稱: " + soundConfig.get("sound") + "，使用預設音效");
+            player.playSound(player.getLocation(), Sound.ENTITY_EXPERIENCE_ORB_PICKUP, 1.0f, 1.0f);
+        }
+    }
     /**
      * 建立副本基礎ID到實例ID的映射
      */
