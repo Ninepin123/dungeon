@@ -3,8 +3,11 @@ package me.ninepin.dungeonSystem.key;
 import me.ninepin.dungeonSystem.Dungeon.Dungeon;
 import me.ninepin.dungeonSystem.Dungeon.WaveDungeon;
 import me.ninepin.dungeonSystem.DungeonSystem;
+import me.ninepin.dungeonSystem.party.Party;
+import org.bukkit.Bukkit;
 import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
+import org.bukkit.Sound;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.Player;
@@ -15,10 +18,7 @@ import org.bukkit.persistence.PersistentDataType;
 
 import java.io.File;
 import java.io.IOException;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 public class KeyManager {
     private final DungeonSystem plugin;
@@ -26,17 +26,84 @@ public class KeyManager {
     private FileConfiguration keyConfig;
     private final NamespacedKey dungeonKeyKey;
     private final NamespacedKey dungeonTypeKey;
-
+    private final Map<UUID, Long> playerKeyCooldowns;
     // 儲存副本基礎ID到實例ID的映射
     private final Map<String, String> baseToDungeonId;
+    private long keyCooldownTime;
+    private final Map<UUID, Boolean> playersToNotify;
 
     public KeyManager(DungeonSystem plugin) {
         this.plugin = plugin;
         this.keyFile = new File(plugin.getDataFolder(), "keys.yml");
         this.dungeonKeyKey = new NamespacedKey(plugin, "dungeon_key");
         this.dungeonTypeKey = new NamespacedKey(plugin, "dungeon_type");
+        this.playerKeyCooldowns = new HashMap<>();
         this.baseToDungeonId = new HashMap<>();
+        this.keyCooldownTime = plugin.getConfig().getLong("key-settings.cooldown-seconds", 180) * 1000L;
+        this.playersToNotify = new HashMap<>();
         loadConfig();
+        startCooldownCheckTask();
+    }
+
+    private void startCooldownCheckTask() {
+        Bukkit.getScheduler().runTaskTimer(plugin, () -> {
+            checkAndNotifyCooldownComplete();
+        }, 20L, 20L); // 每秒檢查一次
+    }
+
+    private void checkAndNotifyCooldownComplete() {
+        long currentTime = System.currentTimeMillis();
+        List<UUID> completedCooldowns = new ArrayList<>();
+
+        for (Map.Entry<UUID, Long> entry : playerKeyCooldowns.entrySet()) {
+            UUID playerId = entry.getKey();
+            long cooldownEnd = entry.getValue();
+
+            // 如果冷卻已完成且玩家需要通知
+            if (currentTime >= cooldownEnd && playersToNotify.containsKey(playerId)) {
+                Player player = Bukkit.getPlayer(playerId);
+                if (player != null && player.isOnline()) {
+                    // 發送通知訊息
+                    notifyPlayerCooldownComplete(player);
+                    // 播放通知音效
+                    playCooldownCompleteSound(player);
+                }
+
+                completedCooldowns.add(playerId);
+            }
+        }
+
+        // 清理已完成的冷卻記錄
+        for (UUID playerId : completedCooldowns) {
+            playerKeyCooldowns.remove(playerId);
+            playersToNotify.remove(playerId);
+        }
+    }
+
+    private void notifyPlayerCooldownComplete(Player player) {
+        // 發送聊天訊息
+        player.sendMessage("§a§l[副本系統] §f你的副本入場卷冷卻已完成！可以再次使用了");
+
+        // 發送標題通知（可選）
+        player.sendTitle("§a副本入場卷", "§f冷卻完成！", 10, 40, 10);
+
+        plugin.getLogger().info("通知玩家 " + player.getName() + " 副本鑰匙冷卻已完成");
+    }
+
+    private void playCooldownCompleteSound(Player player) {
+        try {
+            // 可以在配置文件中設定這個音效
+            String soundName = plugin.getConfig().getString("key-settings.cooldown-complete-sound", "ENTITY_PLAYER_LEVELUP");
+            double volume = plugin.getConfig().getDouble("key-settings.cooldown-complete-volume", 1.0);
+            double pitch = plugin.getConfig().getDouble("key-settings.cooldown-complete-pitch", 1.0);
+
+            Sound sound = Sound.valueOf(soundName);
+            player.playSound(player.getLocation(), sound, (float) volume, (float) pitch);
+        } catch (IllegalArgumentException e) {
+            // 如果音效名稱無效，使用預設音效
+            plugin.getLogger().warning("無效的冷卻完成音效名稱，使用預設音效");
+            player.playSound(player.getLocation(), Sound.ENTITY_PLAYER_LEVELUP, 1.0f, 1.0f);
+        }
     }
 
     private void loadConfig() {
@@ -58,7 +125,8 @@ public class KeyManager {
         // 清空現有的配置信息
         keyConfig = null;
         baseToDungeonId.clear();
-
+        this.keyCooldownTime = plugin.getConfig().getLong("key-settings.cooldown-seconds", 180) * 1000L;
+        plugin.getLogger().info("重新載入鑰匙冷卻時間: " + (keyCooldownTime / 1000L) + " 秒");
         // 重新加載配置
         loadConfig();
         // 重新初始化副本鑰匙
@@ -122,12 +190,28 @@ public class KeyManager {
                 keyConfig.set("keys." + baseId + ".material", material);
                 keyConfig.set("keys." + baseId + ".custom_model_data", customModelData);
                 keyConfig.set("keys." + baseId + ".is_wave", isWaveDungeon);
+
+                // 添加預設音效配置
+                String defaultSound = isWaveDungeon ? "BLOCK_LEVER_CLICK" : "ENTITY_EXPERIENCE_ORB_PICKUP";
+                keyConfig.set("keys." + baseId + ".use_sound.sound", defaultSound);
+                keyConfig.set("keys." + baseId + ".use_sound.volume", 1.0);
+                keyConfig.set("keys." + baseId + ".use_sound.pitch", 1.0);
+
                 saveConfig();
 
                 plugin.getLogger().info("為副本 " + baseId + " 創建了鑰匙配置（類型：" + (isWaveDungeon ? "波次" : "普通") + "）");
             } else {
                 // 检查现有条目是否需要更新波次状态
                 keyConfig.set("keys." + baseId + ".is_wave", isWaveDungeon);
+
+                // 確保現有配置有音效設定，如果沒有就添加預設值
+                if (!keyConfig.contains("keys." + baseId + ".use_sound")) {
+                    String defaultSound = isWaveDungeon ? "BLOCK_LEVER_CLICK" : "ENTITY_EXPERIENCE_ORB_PICKUP";
+                    keyConfig.set("keys." + baseId + ".use_sound.sound", defaultSound);
+                    keyConfig.set("keys." + baseId + ".use_sound.volume", 1.0);
+                    keyConfig.set("keys." + baseId + ".use_sound.pitch", 1.0);
+                    plugin.getLogger().info("為副本 " + baseId + " 添加了預設音效配置");
+                }
 
                 // 如果副本类型发生变化(普通→波次或波次→普通)，可能需要更新配置
                 boolean configIsWave = keyConfig.getBoolean("keys." + baseId + ".is_wave");
@@ -139,6 +223,274 @@ public class KeyManager {
             }
         }
         saveConfig();
+    }
+
+    /**
+     * 檢查玩家是否在鑰匙使用冷卻中
+     *
+     * @param playerId 玩家UUID
+     * @return 是否在冷卻中
+     */
+    public boolean isPlayerOnKeyCooldown(UUID playerId) {
+        Long cooldownEnd = playerKeyCooldowns.get(playerId);
+        if (cooldownEnd == null) {
+            return false;
+        }
+
+        long currentTime = System.currentTimeMillis();
+        if (currentTime >= cooldownEnd) {
+            // 冷卻已結束，移除記錄
+            playerKeyCooldowns.remove(playerId);
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
+     * 獲取玩家剩餘的冷卻時間（秒）
+     *
+     * @param playerId 玩家UUID
+     * @return 剩餘冷卻時間（秒），如果沒有冷卻則返回0
+     */
+    public long getPlayerKeyCooldownRemaining(UUID playerId) {
+        Long cooldownEnd = playerKeyCooldowns.get(playerId);
+        if (cooldownEnd == null) {
+            return 0;
+        }
+
+        long currentTime = System.currentTimeMillis();
+        if (currentTime >= cooldownEnd) {
+            playerKeyCooldowns.remove(playerId);
+            return 0;
+        }
+
+        return (cooldownEnd - currentTime) / 1000L; // 轉換為秒
+    }
+
+    /**
+     * 檢查玩家是否開啟了冷卻通知
+     *
+     * @param playerId 玩家UUID
+     * @return 是否開啟通知
+     */
+    public boolean isPlayerNotificationEnabled(UUID playerId) {
+        return playersToNotify.containsKey(playerId);
+    }
+
+    /**
+     * 設置玩家是否接收冷卻完成通知
+     *
+     * @param playerId 玩家UUID
+     * @param notify   是否通知
+     */
+    public void setPlayerNotification(UUID playerId, boolean notify) {
+        if (playerKeyCooldowns.containsKey(playerId)) {
+            if (notify) {
+                playersToNotify.put(playerId, true);
+            } else {
+                playersToNotify.remove(playerId);
+            }
+
+            Player player = Bukkit.getPlayer(playerId);
+            if (player != null) {
+                if (notify) {
+                    player.sendMessage("§a已開啟副本入場卷冷卻完成通知");
+                } else {
+                    player.sendMessage("§c已關閉副本入場卷冷卻完成通知");
+                }
+            }
+        }
+    }
+
+    /**
+     * 為玩家設置鑰匙使用冷卻
+     *
+     * @param playerId 玩家UUID
+     */
+    public void setPlayerKeyCooldown(UUID playerId) {
+        long cooldownEnd = System.currentTimeMillis() + keyCooldownTime;
+        playerKeyCooldowns.put(playerId, cooldownEnd);
+
+        // 新增：標記此玩家需要接收冷卻完成通知
+        playersToNotify.put(playerId, true);
+
+        Player player = Bukkit.getPlayer(playerId);
+        if (player != null) {
+            int cooldownSeconds = (int) (keyCooldownTime / 1000L);
+            player.sendMessage("§e鑰匙使用冷卻已開始，" + formatTime(cooldownSeconds) + " 內無法再次使用鑰匙");
+            player.sendMessage("§7冷卻完成時會收到通知");
+        }
+
+        plugin.getLogger().info("玩家 " + (player != null ? player.getName() : playerId.toString()) +
+                " 開始鑰匙冷卻，持續 " + (keyCooldownTime / 1000L) + " 秒");
+    }
+
+    /**
+     * 移除玩家的鑰匙冷卻（管理員指令用）
+     *
+     * @param playerId 玩家UUID
+     * @return 是否成功移除
+     */
+    public boolean removePlayerKeyCooldown(UUID playerId) {
+        boolean hadCooldown = playerKeyCooldowns.containsKey(playerId);
+        playerKeyCooldowns.remove(playerId);
+        playersToNotify.remove(playerId); // 新增：同時移除通知標記
+
+        // 如果玩家在線，通知他們冷卻已被移除
+        Player player = Bukkit.getPlayer(playerId);
+        if (player != null && hadCooldown) {
+            player.sendMessage("§a管理員已移除你的副本入場卷冷卻");
+        }
+
+        return hadCooldown;
+    }
+
+
+    /**
+     * 檢查隊伍中是否有任何成員在鑰匙冷卻中
+     *
+     * @param party 隊伍對象
+     * @return 在冷卻中的成員列表
+     */
+    public List<String> getPartyMembersOnCooldown(Party party) {
+        List<String> membersOnCooldown = new ArrayList<>();
+
+        for (UUID memberUUID : party.getMemberUUIDs()) {
+            if (isPlayerOnKeyCooldown(memberUUID)) {
+                Player member = Bukkit.getPlayer(memberUUID);
+                String memberName = member != null ? member.getName() : party.getMembers().get(memberUUID);
+
+                long remainingTime = getPlayerKeyCooldownRemaining(memberUUID);
+                membersOnCooldown.add(memberName + " (" + formatTime((int) remainingTime) + ")");
+            }
+        }
+
+        return membersOnCooldown;
+    }
+
+    /**
+     * 格式化時間顯示
+     *
+     * @param seconds 秒數
+     * @return 格式化的時間字符串
+     */
+    private String formatTime(int seconds) {
+        if (seconds >= 60) {
+            int minutes = seconds / 60;
+            int remainingSeconds = seconds % 60;
+            if (remainingSeconds == 0) {
+                return minutes + "分鐘";
+            } else {
+                return minutes + "分" + remainingSeconds + "秒";
+            }
+        } else {
+            return seconds + "秒";
+        }
+    }
+
+    /**
+     * 獲取所有在冷卻中的玩家信息（管理員指令用）
+     *
+     * @return 冷卻信息列表
+     */
+    public List<String> getAllPlayerCooldowns() {
+        List<String> cooldownInfo = new ArrayList<>();
+        long currentTime = System.currentTimeMillis();
+
+        // 清理過期的冷卻記錄
+        playerKeyCooldowns.entrySet().removeIf(entry -> currentTime >= entry.getValue());
+
+        for (Map.Entry<UUID, Long> entry : playerKeyCooldowns.entrySet()) {
+            UUID playerId = entry.getKey();
+            long remainingTime = (entry.getValue() - currentTime) / 1000L;
+
+            Player player = Bukkit.getPlayer(playerId);
+            String playerName = player != null ? player.getName() : playerId.toString();
+
+            cooldownInfo.add("§e" + playerName + "§f: §c" + formatTime((int) remainingTime));
+        }
+
+        return cooldownInfo;
+    }
+    /**
+     * 手動觸發冷卻完成通知（測試用）
+     * @param player 玩家
+     */
+    public void testCooldownNotification(Player player) {
+        notifyPlayerCooldownComplete(player);
+        playCooldownCompleteSound(player);
+        player.sendMessage("§e[測試] 冷卻完成通知已觸發");
+    }
+    /**
+     * 清理所有過期的冷卻記錄（定時任務用）
+     */
+    /**
+     * 清理所有過期的冷卻記錄（定時任務用）（修改版本）
+     */
+    public void cleanupExpiredCooldowns() {
+        long currentTime = System.currentTimeMillis();
+        int removedCount = 0;
+
+        Iterator<Map.Entry<UUID, Long>> iterator = playerKeyCooldowns.entrySet().iterator();
+        while (iterator.hasNext()) {
+            Map.Entry<UUID, Long> entry = iterator.next();
+            UUID playerId = entry.getKey();
+            if (currentTime >= entry.getValue()) {
+                iterator.remove();
+                playersToNotify.remove(playerId); // 新增：同時清理通知記錄
+                removedCount++;
+            }
+        }
+
+        if (removedCount > 0) {
+            plugin.getLogger().info("清理了 " + removedCount + " 個過期的鑰匙冷卻記錄");
+        }
+    }
+
+    /**
+     * 獲取鑰匙的音效配置
+     *
+     * @param baseId 副本基礎ID
+     * @return 包含音效信息的 Map，如果沒有配置則返回預設值
+     */
+    public Map<String, Object> getKeySoundConfig(String baseId) {
+        Map<String, Object> soundConfig = new HashMap<>();
+
+        if (keyConfig.contains("keys." + baseId + ".use_sound")) {
+            soundConfig.put("sound", keyConfig.getString("keys." + baseId + ".use_sound.sound", "ENTITY_EXPERIENCE_ORB_PICKUP"));
+            soundConfig.put("volume", keyConfig.getDouble("keys." + baseId + ".use_sound.volume", 1.0));
+            soundConfig.put("pitch", keyConfig.getDouble("keys." + baseId + ".use_sound.pitch", 1.0));
+        } else {
+            // 預設音效
+            soundConfig.put("sound", "ENTITY_EXPERIENCE_ORB_PICKUP");
+            soundConfig.put("volume", 1.0);
+            soundConfig.put("pitch", 1.0);
+        }
+
+        return soundConfig;
+    }
+
+    /**
+     * 播放鑰匙使用音效
+     *
+     * @param player 玩家
+     * @param baseId 副本基礎ID
+     */
+    public void playKeyUseSound(Player player, String baseId) {
+        Map<String, Object> soundConfig = getKeySoundConfig(baseId);
+
+        try {
+            String soundName = (String) soundConfig.get("sound");
+            double volume = (Double) soundConfig.get("volume");
+            double pitch = (Double) soundConfig.get("pitch");
+
+            Sound sound = Sound.valueOf(soundName);
+            player.playSound(player.getLocation(), sound, (float) volume, (float) pitch);
+        } catch (IllegalArgumentException e) {
+            plugin.getLogger().warning("無效的音效名稱: " + soundConfig.get("sound") + "，使用預設音效");
+            player.playSound(player.getLocation(), Sound.ENTITY_EXPERIENCE_ORB_PICKUP, 1.0f, 1.0f);
+        }
     }
 
     /**
@@ -324,13 +676,6 @@ public class KeyManager {
 
     public NamespacedKey getDungeonKeyKey() {
         return dungeonKeyKey;
-    }
-
-    /**
-     * 獲取所有可用的副本基礎ID
-     */
-    public List<String> getAvailableBaseIds() {
-        return new ArrayList<>(baseToDungeonId.keySet());
     }
 
     /**
