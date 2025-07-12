@@ -1,10 +1,84 @@
 # config.yml 文件示例
+dungeon-rewards:
+  # 啟用獎勵標準檢查
+  enabled: true
+
+  # 全域設定
+  global:
+    # 傷害標準倍數（會乘以最高輸出玩家的傷害作為獎勵門檻）
+    damage-threshold-multiplier: 0.5
+
+    # 是否顯示獎勵資格訊息
+    show-reward-eligibility: true
+
+    # 獎勵標準訊息設定
+    messages:
+      reward-qualified: "§a§l恭喜！你已達到獎勵標準！"
+      reward-not-qualified: "§c很遺憾，你的傷害未達到獎勵標準（需要達到最高輸出的 {threshold}%）"
+      damage-threshold-info: "§e本次獎勵門檻：{threshold} 傷害（最高輸出的 {percentage}%）"
+
+  # 特定副本設定（覆蓋全域設定）
+  dungeons:
+    # 範例副本 1 - 較低門檻
+    "wave_dungeon_1":
+      damage-threshold-multiplier: 0.3
+
+    # 範例副本 2 - 標準門檻
+    "wave_dungeon_2":
+      damage-threshold-multiplier: 0.5
+
+    # 困難副本 - 較高門檻
+    "hard_dungeon":
+      damage-threshold-multiplier: 0.8
+key-settings:
+  # 鑰匙使用冷卻時間（秒）
+  # 預設值：180 (3分鐘)
+  cooldown-seconds: 180
+  # 新增：冷卻完成通知設定
+  cooldown-complete-sound: "ENTITY_PLAYER_LEVELUP"  # 冷卻完成音效
+  cooldown-complete-volume: 1.0  # 音效音量
+  cooldown-complete-pitch: 1.0   # 音效音調
+
+  # 可選：是否預設開啟通知（如果不設定，預設為開啟）
+  default-notification-enabled: true
+
+  # 可選：通知訊息自定義
+  notification-message: "§a§l[副本系統] §f你的副本入場卷冷卻已完成！可以再次使用了"
+  notification-title: "§a副本入場卷"
+  notification-subtitle: "§f冷卻完成！"
 
 settings:
   exit-point: "world,0,64,0,0,0"
   revival-system-enabled: true
+ranking:
+  hologram-update-interval: 5 # 自動更新間隔（秒）
+wave-dungeon:
+  force-next-wave-countdown: 300
+  sounds:
+    countdown: "BLOCK_NOTE_BLOCK_PLING"
+    wave-start: "ENTITY_ENDER_DRAGON_GROWL"
+    wave-clear: "ENTITY_PLAYER_LEVELUP"
+    dungeon-complete: "UI_TOAST_CHALLENGE_COMPLETE"
+    force-next-wave: "BLOCK_ANVIL_LAND"  # 新增：強制下一波音效
+  sound-options:
+    volume: 1.0
+    pitch: 1.0
+    countdown-pitch: 1.2
+    force-next-wave-pitch: 0.8  # 新增：強制下一波音效的音調
+mob-scaling:
+  # 普通怪物數量倍率（根據玩家數量）
+  normal-multipliers:
+    "1": 1.0    # 1人時，怪物數量 × 1.0
+    "2": 2.0    # 2人時，怪物數量 × 2.0
+    "3": 3.0    # 3人時，怪物數量 × 3.0
+    "4": 4.0    # 4人時，怪物數量 × 4.0
 
-  
+  # BOSS等級加成（根據玩家數量）
+  boss-level-bonus:
+    "1": 0      # 1人時，BOSS等級 +0
+    "2": 5      # 2人時，BOSS等級 +5
+    "3": 10     # 3人時，BOSS等級 +10
+    "4": 15     # 4人時，BOSS等級 +15
 dungeons:
   # 普通副本示例
   dungeon_normal_1:
@@ -31,6 +105,7 @@ dungeons:
     max-players: 5
     spawn-point: "world,200,64,200,0,0"
     death-waiting-area: "world,210,64,210,0,0"
+    modify: false #預設為true，此副本是否需要根據人數提升難度
     target-mob: "boss_dragon"  # 最终Boss (如果有的话)
     # 初始怪物，可选
     mobs:

@@ -3,9 +3,9 @@ package me.ninepin.dungeonSystem.revive;
 import me.ninepin.dungeonSystem.DungeonSystem;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
+import org.bukkit.attribute.Attribute;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
-import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
 import org.bukkit.scheduler.BukkitRunnable;
 
@@ -52,30 +52,22 @@ public class ReviveManager {
         // 標記玩家為正在復活中
         revivingPlayers.add(target.getUniqueId());
 
-        if (reviveType.equals(ReviveItemManager.ADVANCED_REVIVE)) {
-            // 高級復活，立即復活
-            completeRevive(reviver, target, reviverDungeonId, reviveItem);
-            return true;
-        } else {
-            // 普通復活，等待10秒
-            startReviveTimer(reviver, target, reviverDungeonId, reviveItem);
-            return true;
-        }
+        // 所有復活石都需要等待10秒
+        startReviveTimer(reviver, target, reviverDungeonId, reviveItem, reviveType);
+        return true;
     }
 
     /**
-     * 開始復活倒計時（普通復活裝置）
+     * 開始復活倒計時（普通和進階復活石都需要等待）
      */
-    private void startReviveTimer(Player reviver, Player target, String dungeonId, ItemStack reviveItem) {
-        // 給予不能移動的效果
-        reviver.addPotionEffect(new PotionEffect(PotionEffectType.SLOWNESS, 220, 255));
-
+    private void startReviveTimer(Player reviver, Player target, String dungeonId, ItemStack reviveItem, String reviveType) {
         // 儲存原始位置
         Location reviverLocation = reviver.getLocation().clone();
 
         // 顯示開始復活的訊息
-        reviver.sendMessage("§a開始復活 §e" + target.getName() + " §a，請保持不動，倒計時10秒");
-        target.sendMessage("§a玩家 §e" + reviver.getName() + " §a正在復活你，倒計時10秒");
+        String reviveTypeName = reviveType.equals(ReviveItemManager.ADVANCED_REVIVE) ? "進階復活石" : "普通復活石";
+        reviver.sendMessage("§a使用 §e" + reviveTypeName + " §a開始復活 §e" + target.getName() + " §a倒計時10秒");
+        target.sendMessage("§a玩家 §e" + reviver.getName() + " §a正在使用 §e" + reviveTypeName + " §a復活你，倒計時10秒");
 
         // 創建並啟動復活倒計時任務
         BukkitRunnable reviveTask = new BukkitRunnable() {
@@ -91,15 +83,6 @@ public class ReviveManager {
                     return;
                 }
 
-                // 檢查施術者是否移動
-                if (reviverLocation.getWorld() != reviver.getLocation().getWorld() ||
-                        reviverLocation.distance(reviver.getLocation()) > 0.5) {
-                    reviver.sendMessage("§c你移動了，復活取消");
-                    target.sendMessage("§c復活你的玩家移動了，復活取消");
-                    cancelRevive(reviver, target);
-                    return;
-                }
-
                 if (secondsLeft > 0) {
                     if (secondsLeft <= 5 || secondsLeft == 10) {
                         reviver.sendMessage("§a復活倒計時: §e" + secondsLeft + " §a秒");
@@ -107,7 +90,7 @@ public class ReviveManager {
                     }
                     secondsLeft--;
                 } else {
-                    completeRevive(reviver, target, dungeonId, reviveItem);
+                    completeRevive(reviver, target, dungeonId, reviveItem, reviveType);
                     cancel();
                 }
             }
@@ -142,7 +125,7 @@ public class ReviveManager {
     /**
      * 完成復活流程
      */
-    private void completeRevive(Player reviver, Player target, String dungeonId, ItemStack reviveItem) {
+    private void completeRevive(Player reviver, Player target, String dungeonId, ItemStack reviveItem, String reviveType) {
         UUID targetId = target.getUniqueId();
 
         // 移除復活中標記
@@ -161,6 +144,9 @@ public class ReviveManager {
         // 移除施術者的效果
         reviver.removePotionEffect(PotionEffectType.SLOWNESS);
 
+        // 根據復活石類型調整玩家屬性
+        applyReviveEffects(reviver, target, reviveType);
+
         // 消耗物品
         if (reviveItem.getAmount() > 1) {
             reviveItem.setAmount(reviveItem.getAmount() - 1);
@@ -170,17 +156,51 @@ public class ReviveManager {
         reviver.updateInventory();
 
         // 發送成功訊息
-        reviver.sendMessage("§a成功復活了 §e" + target.getName());
-        target.sendMessage("§a你被 §e" + reviver.getName() + " §a復活了");
+        String reviveTypeName = reviveType.equals(ReviveItemManager.ADVANCED_REVIVE) ? "進階復活石" : "普通復活石";
+        reviver.sendMessage("§a成功使用 §e" + reviveTypeName + " §a復活了 §e" + target.getName());
+        target.sendMessage("§a你被 §e" + reviver.getName() + " §a使用 §e" + reviveTypeName + " §a復活了");
 
         // 向所有隊友通知
         String reviverPartyId = getPartyId(reviver);
         if (reviverPartyId != null) {
             for (Player p : Bukkit.getOnlinePlayers()) {
                 if (p != reviver && p != target && reviverPartyId.equals(getPartyId(p))) {
-                    p.sendMessage("§a隊友 §e" + target.getName() + " §a被 §e" + reviver.getName() + " §a復活了");
+                    p.sendMessage("§a隊友 §e" + target.getName() + " §a被 §e" + reviver.getName() + " §a使用 §e" + reviveTypeName + " §a復活了");
                 }
             }
+        }
+    }
+
+    /**
+     * 根據復活石類型應用復活效果
+     */
+    private void applyReviveEffects(Player reviver, Player target, String reviveType) {
+        // 獲取目標玩家最大生命值
+        double targetMaxHealth = target.getAttribute(Attribute.GENERIC_MAX_HEALTH).getValue();
+
+        // 獲取使用者當前血量
+        double reviverCurrentHealth = reviver.getHealth();
+
+        if (reviveType.equals(ReviveItemManager.ADVANCED_REVIVE)) {
+            // 進階復活石：目標復活時擁有50%血量，使用者血量變為當前的80%
+            double targetHealthToSet = targetMaxHealth * 0.5;
+            target.setHealth(targetHealthToSet);
+
+            double reviverHealthToSet = reviverCurrentHealth * 0.8;
+            reviver.setHealth(reviverHealthToSet);
+
+            target.sendMessage("§e進階復活石效果：§a復活時擁有 §650%血量");
+            reviver.sendMessage("§e進階復活石消耗：§6你的血量變為 §680%");
+        } else {
+            // 普通復活石：目標復活時只有20%血量，使用者血量變為當前的50%
+            double targetHealthToSet = targetMaxHealth * 0.2;
+            target.setHealth(targetHealthToSet);
+
+            double reviverHealthToSet = reviverCurrentHealth * 0.5;
+            reviver.setHealth(reviverHealthToSet);
+
+            target.sendMessage("§e普通復活石效果：§c復活時只有 §420%血量");
+            reviver.sendMessage("§e普通復活石消耗：§c你的血量變為 §450%");
         }
     }
 

@@ -24,6 +24,9 @@ public class DungeonManager {
     private final Map<String, Set<UUID>> deadPlayers;
     private final Map<String, List<String>> dungeonInstances;
     private final WaveDungeonManager waveDungeonManager;
+    private final Map<Integer, Double> normalMobMultipliers; // 根據人數的普通怪物倍率
+    private final Map<Integer, Integer> bossLevelBonus;      // 根據人數的BOSS等級加成
+    private Set<String> cachedDungeonWorlds = null;
 
     // 映射實例ID到其副本ID
     private final Map<String, String> instanceToDungeon;
@@ -37,9 +40,89 @@ public class DungeonManager {
         this.deadPlayers = new HashMap<>();
         this.dungeonInstances = new HashMap<>();
         this.instanceToDungeon = new HashMap<>();
+        this.normalMobMultipliers = new HashMap<>();
+        this.bossLevelBonus = new HashMap<>();
         this.waveDungeonManager = new WaveDungeonManager(plugin, this);
-        // 從配置文件加載副本
+
+        // 載入配置
+        loadMobScalingConfig();
         loadDungeons();
+    }
+
+    /**
+     * 從配置文件載入怪物縮放配置
+     */
+    private void loadMobScalingConfig() {
+        // 載入普通怪物數量倍率配置
+        ConfigurationSection normalMultiplierSection = plugin.getConfig().getConfigurationSection("mob-scaling.normal-multipliers");
+        if (normalMultiplierSection != null) {
+            for (String playerCount : normalMultiplierSection.getKeys(false)) {
+                try {
+                    int count = Integer.parseInt(playerCount);
+                    double multiplier = normalMultiplierSection.getDouble(playerCount, 1.0);
+                    normalMobMultipliers.put(count, multiplier);
+                    plugin.getLogger().info("載入普通怪物倍率配置: " + count + "人 = " + multiplier + "倍");
+                } catch (NumberFormatException e) {
+                    plugin.getLogger().warning("無效的玩家數量配置: " + playerCount);
+                }
+            }
+        } else {
+            // 預設配置
+            normalMobMultipliers.put(1, 1.0);
+            normalMobMultipliers.put(2, 2.0);
+            normalMobMultipliers.put(3, 3.0);
+            normalMobMultipliers.put(4, 4.0);
+            plugin.getLogger().info("使用預設普通怪物倍率配置");
+        }
+
+        // 載入BOSS等級加成配置
+        ConfigurationSection bossLevelSection = plugin.getConfig().getConfigurationSection("mob-scaling.boss-level-bonus");
+        if (bossLevelSection != null) {
+            for (String playerCount : bossLevelSection.getKeys(false)) {
+                try {
+                    int count = Integer.parseInt(playerCount);
+                    int levelBonus = bossLevelSection.getInt(playerCount, 0);
+                    bossLevelBonus.put(count, levelBonus);
+                    plugin.getLogger().info("載入BOSS等級加成配置: " + count + "人 = +" + levelBonus + "等級");
+                } catch (NumberFormatException e) {
+                    plugin.getLogger().warning("無效的玩家數量配置: " + playerCount);
+                }
+            }
+        } else {
+            // 預設配置
+            bossLevelBonus.put(1, 0);
+            bossLevelBonus.put(2, 5);
+            bossLevelBonus.put(3, 10);
+            bossLevelBonus.put(4, 15);
+            plugin.getLogger().info("使用預設BOSS等級加成配置");
+        }
+    }
+
+    /**
+     * 獲取所有副本世界的名稱集合
+     *
+     * @return 包含所有副本世界名稱的Set集合
+     */
+    public Set<String> getAllDungeonWorlds() {
+        Set<String> dungeonWorlds = new HashSet<>();
+
+        for (Dungeon dungeon : dungeons.values()) {
+            if (dungeon.getSpawnPoint() != null && dungeon.getSpawnPoint().getWorld() != null) {
+                String worldName = dungeon.getSpawnPoint().getWorld().getName();
+                dungeonWorlds.add(worldName);
+                plugin.getLogger().info("發現副本世界: " + worldName); // 除錯用
+            }
+        }
+
+        plugin.getLogger().info("所有副本世界: " + dungeonWorlds); // 除錯用
+        return dungeonWorlds;
+    }
+
+    /**
+     * 清除世界緩存（在重載配置時調用）
+     */
+    public void clearWorldCache() {
+        cachedDungeonWorlds = null;
     }
 
     /**
@@ -62,8 +145,12 @@ public class DungeonManager {
             int maxPlayers = dungeonSection.getInt("max-players", 4);
             String targetMobId = dungeonSection.getString("target-mob"); // 读取目标怪物ID
 
+            // 新增：讀取顯示名稱
+            String displayName = dungeonSection.getString("display-name");
+
             String spawnPointStr = dungeonSection.getString("spawn-point");
             Location spawnPoint = parseLocation(spawnPointStr);
+            boolean modify = dungeonSection.getBoolean("modify", true); // 預設為 true
 
             if (spawnPoint == null) {
                 plugin.getLogger().warning("Invalid spawn-point format for dungeon instance " + instanceId);
@@ -81,50 +168,11 @@ public class DungeonManager {
             // 读取副本模式
             String dungeonType = dungeonSection.getString("type", "normal");
 
-            // 讀取普通副本的怪物配置（修改部分）
+            // 讀取普通副本的怪物配置（使用統一方法）
             List<DungeonMob> mobs = new ArrayList<>();
             if (dungeonSection.isList("mobs")) {
                 List<Map<?, ?>> mobsList = dungeonSection.getMapList("mobs");
-                for (Map<?, ?> mobMap : mobsList) {
-                    String mobId = (String) mobMap.get("id");
-                    String locationStr = (String) mobMap.get("location");
-                    Location mobLocation = parseLocation(locationStr);
-
-                    // 新增：讀取 amount 和 radius
-                    int amount = 1; // 預設值
-                    double radius = 0.0; // 預設值
-
-                    // 讀取 amount（如果存在）
-                    if (mobMap.containsKey("amount")) {
-                        Object amountObj = mobMap.get("amount");
-                        if (amountObj instanceof Number) {
-                            amount = ((Number) amountObj).intValue();
-                            // 確保數量至少為 1
-                            if (amount < 1) {
-                                plugin.getLogger().warning("Invalid amount (" + amount + ") for mob " + mobId + " in dungeon " + instanceId + ", setting to 1");
-                                amount = 1;
-                            }
-                        }
-                    }
-
-                    // 讀取 radius（如果存在）
-                    if (mobMap.containsKey("radius")) {
-                        Object radiusObj = mobMap.get("radius");
-                        if (radiusObj instanceof Number) {
-                            radius = ((Number) radiusObj).doubleValue();
-                            // 確保半徑不為負數
-                            if (radius < 0.0) {
-                                plugin.getLogger().warning("Invalid radius (" + radius + ") for mob " + mobId + " in dungeon " + instanceId + ", setting to 0.0");
-                                radius = 0.0;
-                            }
-                        }
-                    }
-
-                    if (mobId != null && mobLocation != null) {
-                        mobs.add(new DungeonMob(mobId, mobLocation, amount, radius));
-                        plugin.getLogger().info("Loaded mob " + mobId + " with amount: " + amount + ", radius: " + radius + " in dungeon " + instanceId);
-                    }
-                }
+                loadMobConfigFromSection(mobsList, mobs, instanceId);
             }
 
             Dungeon dungeon;
@@ -135,7 +183,7 @@ public class DungeonManager {
                 int totalWaves = dungeonSection.getInt("waves.total", 1);
                 Map<Integer, List<DungeonMob>> waveMobs = new HashMap<>();
 
-                // 加载每一波的怪物配置（修改部分）
+                // 加载每一波的怪物配置（使用統一方法）
                 ConfigurationSection wavesSection = dungeonSection.getConfigurationSection("waves");
                 if (wavesSection != null) {
                     for (int wave = 1; wave <= totalWaves; wave++) {
@@ -144,46 +192,8 @@ public class DungeonManager {
                             List<DungeonMob> waveMobList = new ArrayList<>();
                             List<Map<?, ?>> waveMobsList = wavesSection.getMapList(waveKey);
 
-                            for (Map<?, ?> mobMap : waveMobsList) {
-                                String mobId = (String) mobMap.get("id");
-                                String locationStr = (String) mobMap.get("location");
-                                Location mobLocation = parseLocation(locationStr);
-
-                                // 新增：讀取 amount 和 radius
-                                int amount = 1; // 預設值
-                                double radius = 0.0; // 預設值
-
-                                // 讀取 amount（如果存在）
-                                if (mobMap.containsKey("amount")) {
-                                    Object amountObj = mobMap.get("amount");
-                                    if (amountObj instanceof Number) {
-                                        amount = ((Number) amountObj).intValue();
-                                        // 確保數量至少為 1
-                                        if (amount < 1) {
-                                            plugin.getLogger().warning("Invalid amount (" + amount + ") for mob " + mobId + " in wave " + wave + " of dungeon " + instanceId + ", setting to 1");
-                                            amount = 1;
-                                        }
-                                    }
-                                }
-
-                                // 讀取 radius（如果存在）
-                                if (mobMap.containsKey("radius")) {
-                                    Object radiusObj = mobMap.get("radius");
-                                    if (radiusObj instanceof Number) {
-                                        radius = ((Number) radiusObj).doubleValue();
-                                        // 確保半徑不為負數
-                                        if (radius < 0.0) {
-                                            plugin.getLogger().warning("Invalid radius (" + radius + ") for mob " + mobId + " in wave " + wave + " of dungeon " + instanceId + ", setting to 0.0");
-                                            radius = 0.0;
-                                        }
-                                    }
-                                }
-
-                                if (mobId != null && mobLocation != null) {
-                                    waveMobList.add(new DungeonMob(mobId, mobLocation, amount, radius));
-                                    plugin.getLogger().info("Loaded wave mob " + mobId + " with amount: " + amount + ", radius: " + radius + " for wave " + wave + " in dungeon " + instanceId);
-                                }
-                            }
+                            // 使用統一的方法讀取怪物配置
+                            loadMobConfigFromSection(waveMobsList, waveMobList, instanceId + " wave " + wave);
 
                             waveMobs.put(wave, waveMobList);
                         } else {
@@ -192,12 +202,21 @@ public class DungeonManager {
                     }
                 }
 
-                // 创建波次副本实例
-                dungeon = new WaveDungeon(instanceId, levelRequired, maxPlayers, spawnPoint, deathWaitingArea, mobs, targetMobId, totalWaves, waveMobs);
-                plugin.getLogger().info("Loaded wave dungeon: " + instanceId + " with " + totalWaves + " waves");
+                // 创建波次副本实例（使用新的建構函數）
+                if (displayName != null) {
+                    dungeon = new WaveDungeon(instanceId, displayName, levelRequired, maxPlayers, spawnPoint, deathWaitingArea, mobs, targetMobId, totalWaves, waveMobs, modify);
+                } else {
+                    dungeon = new WaveDungeon(instanceId, levelRequired, maxPlayers, spawnPoint, deathWaitingArea, mobs, targetMobId, totalWaves, waveMobs, modify);
+                }
+                plugin.getLogger().info("Loaded wave dungeon: " + instanceId + " with " + totalWaves + " waves" + (displayName != null ? " (Display name: " + displayName + ")" : ""));
             } else {
-                // 创建普通副本实例
-                dungeon = new Dungeon(instanceId, levelRequired, maxPlayers, spawnPoint, deathWaitingArea, mobs, targetMobId);
+                // 创建普通副本实例（使用新的建構函數）
+                if (displayName != null) {
+                    dungeon = new Dungeon(instanceId, displayName, levelRequired, maxPlayers, spawnPoint, deathWaitingArea, mobs, targetMobId);
+                } else {
+                    dungeon = new Dungeon(instanceId, levelRequired, maxPlayers, spawnPoint, deathWaitingArea, mobs, targetMobId);
+                }
+                plugin.getLogger().info("Loaded normal dungeon: " + instanceId + (displayName != null ? " (Display name: " + displayName + ")" : ""));
             }
 
             dungeons.put(instanceId, dungeon);
@@ -223,6 +242,82 @@ public class DungeonManager {
             instanceToDungeon.put(instanceId, dungeonId);
             List<String> instances = dungeonInstances.computeIfAbsent(dungeonId, k -> new ArrayList<>());
             instances.add(instanceId);
+        }
+    }
+
+    /**
+     * 從配置段落載入怪物配置的統一方法
+     *
+     * @param mobsList      怪物配置列表
+     * @param targetMobList 目標怪物列表
+     * @param contextInfo   上下文信息（用於日誌）
+     */
+    private void loadMobConfigFromSection(List<Map<?, ?>> mobsList, List<DungeonMob> targetMobList, String contextInfo) {
+        for (Map<?, ?> mobMap : mobsList) {
+            String mobId = (String) mobMap.get("id");
+            String locationStr = (String) mobMap.get("location");
+            Location mobLocation = parseLocation(locationStr);
+
+            // 讀取 amount
+            int amount = 1; // 預設值
+            if (mobMap.containsKey("amount")) {
+                Object amountObj = mobMap.get("amount");
+                if (amountObj instanceof Number) {
+                    amount = ((Number) amountObj).intValue();
+                    // 確保數量至少為 1
+                    if (amount < 1) {
+                        plugin.getLogger().warning("Invalid amount (" + amount + ") for mob " + mobId + " in " + contextInfo + ", setting to 1");
+                        amount = 1;
+                    }
+                }
+            }
+
+            // 讀取 radius
+            double radius = 0.0; // 預設值
+            if (mobMap.containsKey("radius")) {
+                Object radiusObj = mobMap.get("radius");
+                if (radiusObj instanceof Number) {
+                    radius = ((Number) radiusObj).doubleValue();
+                    // 確保半徑不為負數
+                    if (radius < 0.0) {
+                        plugin.getLogger().warning("Invalid radius (" + radius + ") for mob " + mobId + " in " + contextInfo + ", setting to 0.0");
+                        radius = 0.0;
+                    }
+                }
+            }
+
+            // 讀取 level
+            int level = 1; // 預設值
+            if (mobMap.containsKey("level")) {
+                Object levelObj = mobMap.get("level");
+                if (levelObj instanceof Number) {
+                    level = ((Number) levelObj).intValue();
+                    if (level < 1) {
+                        plugin.getLogger().warning("Invalid level (" + level + ") for mob " + mobId + " in " + contextInfo + ", setting to 1");
+                        level = 1;
+                    }
+                }
+            }
+
+            // 讀取 type (新增)
+            String type = "NORMAL"; // 預設值
+            if (mobMap.containsKey("type")) {
+                Object typeObj = mobMap.get("type");
+                if (typeObj instanceof String) {
+                    String typeStr = ((String) typeObj).toUpperCase();
+                    if ("BOSS".equals(typeStr) || "NORMAL".equals(typeStr)) {
+                        type = typeStr;
+                    } else {
+                        plugin.getLogger().warning("Invalid type (" + typeObj + ") for mob " + mobId + " in " + contextInfo + ", setting to NORMAL");
+                    }
+                }
+            }
+
+            if (mobId != null && mobLocation != null) {
+                // 使用支持 type 的構造函數
+                targetMobList.add(new DungeonMob(mobId, mobLocation, amount, radius, level, type));
+                plugin.getLogger().info("Loaded mob " + mobId + " with type: " + type + ", amount: " + amount + ", radius: " + radius + ", level: " + level + " in " + contextInfo);
+            }
         }
     }
 
@@ -293,7 +388,7 @@ public class DungeonManager {
      * @param wave      波次
      * @return 是否成功添加
      */
-    public boolean addMobToWaveDungeon(String dungeonId, String mobId, Location location, int amount, double radius, int wave) {
+    public boolean addMobToWaveDungeon(String dungeonId, String mobId, Location location, int amount, double radius, int wave, int level, String type) {
         // 檢查副本是否存在
         Dungeon dungeon = dungeons.get(dungeonId);
         if (!(dungeon instanceof WaveDungeon)) {
@@ -309,17 +404,17 @@ public class DungeonManager {
             return false;
         }
 
-        // 創建新的 DungeonMob 對象
-        DungeonMob newMob = new DungeonMob(mobId, location, amount, radius);
+        // 創建新的 DungeonMob 對象，使用支持 type 的構造函數
+        DungeonMob newMob = new DungeonMob(mobId, location.clone(), amount, radius, level, type);
 
         // 使用 WaveDungeon 的方法添加怪物到指定波次
         waveDungeon.addMobToWave(wave, newMob);
 
         // 保存到配置文件
-        boolean saved = saveMobToWaveConfig(dungeonId, mobId, location, amount, radius, wave);
+        boolean saved = saveMobToWaveConfig(dungeonId, mobId, location, amount, radius, wave, level, type);
 
         if (saved) {
-            plugin.getLogger().info("已成功添加怪物 " + mobId + " 到副本 " + dungeonId + " 的第 " + wave + " 波");
+            plugin.getLogger().info("已成功添加 " + type + " 怪物 " + mobId + " 到副本 " + dungeonId + " 的第 " + wave + " 波");
         }
 
         return saved;
@@ -336,7 +431,7 @@ public class DungeonManager {
      * @param wave      波次
      * @return 是否成功保存
      */
-    private boolean saveMobToWaveConfig(String dungeonId, String mobId, Location location, int amount, double radius, int wave) {
+    private boolean saveMobToWaveConfig(String dungeonId, String mobId, Location location, int amount, double radius, int wave, int level, String type) {
         try {
             ConfigurationSection dungeonSection = plugin.getConfig().getConfigurationSection("dungeons." + dungeonId);
             if (dungeonSection == null) {
@@ -370,6 +465,8 @@ public class DungeonManager {
             mobMap.put("location", locationToString(location));
             mobMap.put("amount", amount);
             mobMap.put("radius", radius);
+            mobMap.put("level", level);
+            mobMap.put("type", type); // 新增 type 屬性
 
             // 添加到該波次
             waveList.add(mobMap);
@@ -378,13 +475,31 @@ public class DungeonManager {
             wavesSection.set(waveKey, waveList);
             plugin.saveConfig();
 
-            plugin.getLogger().info("已添加怪物 " + mobId + " 到副本 " + dungeonId + " 的第 " + wave + " 波配置文件");
+            plugin.getLogger().info("已添加 " + type + " 怪物 " + mobId + " 到副本 " + dungeonId + " 的第 " + wave + " 波配置文件");
             return true;
         } catch (Exception e) {
             plugin.getLogger().severe("保存波次怪物配置到文件時發生錯誤: " + e.getMessage());
             e.printStackTrace();
             return false;
         }
+    }
+
+// 同時需要保留原來的方法作為向後兼容（可選）
+
+    /**
+     * 向後兼容的方法，預設類型為 NORMAL
+     */
+    @Deprecated
+    public boolean addMobToWaveDungeon(String dungeonId, String mobId, Location location, int amount, double radius, int wave, int level) {
+        return addMobToWaveDungeon(dungeonId, mobId, location, amount, radius, wave, level, "NORMAL");
+    }
+
+    /**
+     * 向後兼容的保存方法，預設類型為 NORMAL
+     */
+    @Deprecated
+    private boolean saveMobToWaveConfig(String dungeonId, String mobId, Location location, int amount, double radius, int wave, int level) {
+        return saveMobToWaveConfig(dungeonId, mobId, location, amount, radius, wave, level, "NORMAL");
     }
 
     /**
@@ -427,6 +542,26 @@ public class DungeonManager {
             // 檢查副本是否空了
             checkIfDungeonEmpty(dungeonId);
         }
+    }
+
+    /**
+     * 獲取普通怪物倍率
+     *
+     * @param playerCount 玩家數量
+     * @return 怪物數量倍率
+     */
+    public double getNormalMobMultiplier(int playerCount) {
+        return normalMobMultipliers.getOrDefault(playerCount, 1.0);
+    }
+
+    /**
+     * 獲取BOSS等級加成
+     *
+     * @param playerCount 玩家數量
+     * @return BOSS等級加成
+     */
+    public int getBossLevelBonus(int playerCount) {
+        return bossLevelBonus.getOrDefault(playerCount, 0);
     }
 
     // 新增方法：檢查副本是否空了
@@ -711,8 +846,8 @@ public class DungeonManager {
         for (UUID memberId : party.getMemberUUIDs()) {
             Player memberPlayer = Bukkit.getPlayer(memberId);
             if (memberPlayer != null && memberPlayer.isOnline()) {
-                memberPlayer.teleport(dungeon.getSpawnPoint());
                 playerDungeons.put(memberPlayer.getUniqueId(), instanceId);
+                memberPlayer.teleport(dungeon.getSpawnPoint());
                 memberPlayer.sendMessage("§a你已进入副本: §e" + getDungeonDisplayName(instanceId));
             }
         }
@@ -727,6 +862,19 @@ public class DungeonManager {
         }
 
         player.sendMessage("§a你的队伍已进入副本 §e" + getDungeonDisplayName(instanceId));
+
+        // === 在這裡添加傷害統計初始化 ===
+        // 初始化傷害統計 - 只統計在線且成功進入副本的隊員
+        Set<UUID> partyMembers = new HashSet<>();
+        for (UUID memberId : party.getMemberUUIDs()) {
+            Player memberPlayer = Bukkit.getPlayer(memberId);
+            if (memberPlayer != null && memberPlayer.isOnline()) {
+                partyMembers.add(memberId);
+            }
+        }
+        plugin.getDamageTracker().initDungeonStats(instanceId, partyMembers);
+        // === 傷害統計初始化結束 ===
+
         return true;
     }
 
@@ -746,7 +894,7 @@ public class DungeonManager {
      * @param radius    半徑
      * @return 是否成功添加
      */
-    public boolean addMobToDungeon(String dungeonId, String mobId, Location location, int amount, double radius) {
+    public boolean addMobToDungeon(String dungeonId, String mobId, Location location, int amount, double radius, int level, String type) {
         // 檢查副本是否存在
         Dungeon dungeon = dungeons.get(dungeonId);
         if (dungeon == null) {
@@ -755,13 +903,13 @@ public class DungeonManager {
         }
 
         // 創建新的 DungeonMob 對象
-        DungeonMob newMob = new DungeonMob(mobId, location, amount, radius);
+        DungeonMob newMob = new DungeonMob(mobId, location.clone(), amount, radius, level, type);
 
         // 添加到內存中的副本對象
         dungeon.getMobs().add(newMob);
 
         // 保存到配置文件
-        return saveMobToConfig(dungeonId, mobId, location, amount, radius);
+        return saveMobToConfig(dungeonId, mobId, location, amount, radius, level, type);
     }
 
     /**
@@ -775,7 +923,7 @@ public class DungeonManager {
      * @return 是否成功保存
      */
 
-    private boolean saveMobToConfig(String dungeonId, String mobId, Location location, int amount, double radius) {
+    private boolean saveMobToConfig(String dungeonId, String mobId, Location location, int amount, double radius, int level, String type) {
         try {
             ConfigurationSection dungeonSection = plugin.getConfig().getConfigurationSection("dungeons." + dungeonId);
             if (dungeonSection == null) {
@@ -786,7 +934,6 @@ public class DungeonManager {
             // 獲取現有的怪物列表
             List<Map<String, Object>> mobsList = new ArrayList<>();
             if (dungeonSection.isList("mobs")) {
-                // 創建一個新的列表，複製原有的內容
                 List<Map<?, ?>> existingMobs = dungeonSection.getMapList("mobs");
                 for (Map<?, ?> mob : existingMobs) {
                     Map<String, Object> mobMap = new HashMap<>();
@@ -803,6 +950,8 @@ public class DungeonManager {
             mobMap.put("location", locationToString(location));
             mobMap.put("amount", amount);
             mobMap.put("radius", radius);
+            mobMap.put("level", level);
+            mobMap.put("type", type); // 新增 type 屬性
 
             // 添加到列表
             mobsList.add(mobMap);
@@ -811,7 +960,7 @@ public class DungeonManager {
             dungeonSection.set("mobs", mobsList);
             plugin.saveConfig();
 
-            plugin.getLogger().info("已添加怪物 " + mobId + " 到副本 " + dungeonId + " 的配置文件");
+            plugin.getLogger().info("已添加 " + type + " 怪物 " + mobId + " 到副本 " + dungeonId + " 的配置文件");
             return true;
         } catch (Exception e) {
             plugin.getLogger().severe("保存怪物配置到文件時發生錯誤: " + e.getMessage());
@@ -845,18 +994,50 @@ public class DungeonManager {
      * 在副本中生成所有怪物
      */
     private void spawnDungeonMobs(Dungeon dungeon) {
+        // 計算當前副本中的玩家數量
+        int playerCount = 0;
+        for (Map.Entry<UUID, String> entry : playerDungeons.entrySet()) {
+            if (dungeon.getId().equals(entry.getValue())) {
+                Player player = Bukkit.getPlayer(entry.getKey());
+                if (player != null && player.isOnline()) {
+                    playerCount++;
+                }
+            }
+        }
+
         // 創建一個新的 UUID 列表來存儲這個副本的實體
         List<UUID> entities = new ArrayList<>();
         dungeonEntities.put(dungeon.getId(), entities);
 
+        plugin.getLogger().info("正在為副本 " + dungeon.getId() + " 生成怪物，玩家數量: " + playerCount);
+
         for (DungeonMob mob : dungeon.getMobs()) {
             try {
-                // 根據 amount 生成多隻怪物
-                int amount = mob.getAmount();
+                int finalAmount;
+                int finalLevel;
+
+                if (mob.isNormal()) {
+                    // 普通怪物：根據人數調整數量
+                    double multiplier = normalMobMultipliers.getOrDefault(playerCount, 1.0);
+                    finalAmount = (int) Math.ceil(mob.getAmount() * multiplier);
+                    finalLevel = mob.getLevel(); // 等級不變
+                    plugin.getLogger().info("普通怪物 " + mob.getId() + " 數量從 " + mob.getAmount() + " 調整為 " + finalAmount + " (倍率: " + multiplier + ")");
+                } else if (mob.isBoss()) {
+                    // BOSS怪物：數量不變，根據人數調整等級
+                    finalAmount = mob.getAmount();
+                    int levelBonus = bossLevelBonus.getOrDefault(playerCount, 0);
+                    finalLevel = mob.getLevel() + levelBonus;
+                    plugin.getLogger().info("BOSS怪物 " + mob.getId() + " 等級從 " + mob.getLevel() + " 調整為 " + finalLevel + " (加成: +" + levelBonus + ")");
+                } else {
+                    // 預設情況
+                    finalAmount = mob.getAmount();
+                    finalLevel = mob.getLevel();
+                }
+
                 double radius = mob.getRadius();
                 Location baseLocation = mob.getLocation();
 
-                for (int i = 0; i < amount; i++) {
+                for (int i = 0; i < finalAmount; i++) {
                     Location spawnLocation;
 
                     if (radius > 0) {
@@ -868,12 +1049,12 @@ public class DungeonManager {
                     }
 
                     // 生成怪物並獲取實體引用
-                    ActiveMob entity = MythicBukkit.inst().getMobManager().spawnMob(mob.getId(), spawnLocation);
+                    ActiveMob entity = MythicBukkit.inst().getMobManager().spawnMob(mob.getId(), spawnLocation, finalLevel);
                     if (entity != null) {
                         // 保存怪物的 UUID
                         entities.add(entity.getUniqueId());
-                        plugin.getLogger().info("Spawned MythicMob " + mob.getId() +
-                                " at " + locationToString(spawnLocation) +
+                        plugin.getLogger().info("Spawned " + mob.getType() + " MythicMob " + mob.getId() +
+                                " (Level " + finalLevel + ") at " + locationToString(spawnLocation) +
                                 " in dungeon " + dungeon.getId());
                     }
                 }
@@ -1104,6 +1285,7 @@ public class DungeonManager {
      */
     public void reloadDungeons() {
         dungeons.clear();
+        clearWorldCache();
         plugin.reloadConfig();
         loadDungeons();
     }

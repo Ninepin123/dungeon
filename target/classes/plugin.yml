@@ -2,7 +2,8 @@ name: DungeonSystem
 version: 1.0
 main: me.ninepin.dungeonSystem.DungeonSystem
 api-version: 1.16
-depend: [ MythicMobs ]
+depend: [ MythicMobs,DecentHolograms,PlaceholderAPI ]
+softdepend: [ CMI ]
 commands:
   dungeon:
     description: 副本系統主指令
@@ -11,10 +12,18 @@ commands:
   party:
     description: 隊伍系統指令
     usage: /party <子指令>
+  keynotify:
+    description: 管理副本入場卷冷卻完成通知
+    usage: /keynotify [on|off|test|status]
+    aliases: [ kn, keynotification ]
+    permission: dungeonsystem.keynotify
 permissions:
   dungeonsystem.admin:
     description: 允許使用管理員指令
     default: op
   dungeon.join:
     description: 允許加入副本
-    default: false
+    default: op
+  dungeonsystem.keynotify:
+    description: 允許使用 keynotify 指令
+    default: true
